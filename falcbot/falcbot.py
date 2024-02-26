@@ -29,6 +29,8 @@ class SlackSettings(BaseSettings):
 settings = SlackSettings()
 app = App(token=settings.SLACK_BOT_TOKEN)
 
+_status_keys = ["complete", "running", "waiting", "error", "invalid", "deleted"]
+
 
 @app.message(re.compile("(hi|hello|hey)"))
 def say_hello_regex(say, context):
@@ -47,16 +49,35 @@ def are_you_alive(say, context):
 def query_all_networks(say, context):
     logger.debug("Querying all networks")
     client = AlchemiscaleHelper()
+    scope_status_dict = client._client.get_scope_status(visualize=False)
+    for k, v in scope_status_dict.items():
+        say(f"Status {k} has count {v}")
+
+    say("________________________________")
+    say("Checking for running networks...")
+
     running_networks = client._client.query_networks()
-    for key in running_networks:
-        # get status
-        network_status = client._client.get_network_status(network=key, visualize=False)
-        running_tasks = client._client.get_network_actioned_tasks(network=key)
-        say(f"Network {key} has status {network_status} and tasks {running_tasks}")
+    if not running_networks:
+        say("No networks are running currently")
+    else:
+        for key in running_networks:
+            # get status
+            network_status = client._client.get_network_status(
+                network=key, visualize=False
+            )
+            running_tasks = client._client.get_network_actioned_tasks(network=key)
+            if "running" in network_status or "waiting" in network_status:
+                say(f"Network {key} has following status breakdown")
+                state_breakdown = ""
+                for state in _status_keys:
+                    state_breakdown += f"{state}: {network_status.get(state, 0)} "
+                say(state_breakdown)
+                say("________________________________")
 
 
 @app.message(re.compile("(.*)plan and submit from postera molecule set(.*)"))
 def plan_and_submit_postera(say, context):
+    logger.debug("Planning and submitting from postera")
     # create
     postera_molset_name = "X"
     campaign = "Y"
@@ -101,7 +122,7 @@ def plan_and_submit_postera(say, context):
 
 @app.message(re.compile("(.*)plan and submit from JSON(.*)"))
 def plan_and_submit_json(say, context):
-    pass
+    ...
 
 
 @app.event("message")
