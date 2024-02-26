@@ -1,18 +1,22 @@
-name: test
+name: falcbot
 channels:
-
   - conda-forge
-
   - defaults
+
 dependencies:
-    # Base depends
+  # Base depends
   - python
   - pip
 
-    # Testing
+  # Testing
   - pytest
   - pytest-cov
   - codecov
+
+  - pydantic<2.0a0
+
+  # slack
+  - slack-bolt
 
     # Pip-only installs
   #- pip:
