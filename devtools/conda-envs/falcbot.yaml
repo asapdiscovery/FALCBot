@@ -1,11 +1,12 @@
 name: falcbot
 channels:
   - conda-forge
-  - defaults
+  - openeye
+
 
 dependencies:
   # Base depends
-  - python
+  - python <3.11
   - pip
 
   # Testing
@@ -13,12 +14,25 @@ dependencies:
   - pytest-cov
   - codecov
 
+
+  # falcbot
+  - slack-bolt
   - pydantic<2.0a0
 
-  # slack
-  - slack-bolt
+
+  # alchemy
+  - numpy
+  - gufe =>0.9.5
+  - httpx
+  - perses >=0.10.2
+  - kartograf
+  - rich
+  - alchemiscale-client
+  - cinnabar >=0.4.1
+  - openeye-toolkits
 
     # Pip-only installs
-  #- pip:
-  #  - codecov
+  - pip:
+    - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-alchemy&subdirectory=asapdiscovery-alchemy
+    - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-data&subdirectory=asapdiscovery-data
 
