@@ -1,6 +1,9 @@
 import logging
 import re
 import uuid
+import logging
+import tempfile
+
 from pydantic import BaseSettings, Field
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -14,7 +17,9 @@ from asapdiscovery.alchemy.schema.fec import (
 from asapdiscovery.alchemy.utils import AlchemiscaleHelper
 from asapdiscovery.data.services.postera.postera_factory import PosteraFactory
 
-logger = logging.getLogger(__name__)
+
+# logger in a global context
+logging.basicConfig(level=logging.DEBUG)
 
 
 class SlackSettings(BaseSettings):
@@ -32,6 +37,18 @@ app = App(token=settings.SLACK_BOT_TOKEN)
 _status_keys = ["complete", "running", "waiting", "error", "invalid", "deleted"]
 
 
+def _download_slack_file(file_url, file_name):
+    import requests
+
+    headers = {"Authorization": f"Bearer {settings.SLACK_BOT_TOKEN}"}
+
+    response = requests.get(file_url, headers=headers, stream=True)
+    response.raise_for_status()
+    with open(file_name, "wb") as f:
+        for chunk in response.iter_content(chunk_size=2048):
+            f.write(chunk)
+
+
 @app.message(re.compile("(hi|hello|hey)"))
 def say_hello_regex(say, context):
     # regular expression matches are inside of context.matches
@@ -46,7 +63,7 @@ def are_you_alive(say, context):
 
 
 @app.message(re.compile("(.*)query all networks(.*)"))
-def query_all_networks(say, context):
+def query_all_networks(say, context, logger):
     logger.debug("Querying all networks")
     client = AlchemiscaleHelper()
     scope_status_dict = client._client.get_scope_status(visualize=False)
@@ -75,23 +92,85 @@ def query_all_networks(say, context):
                 say("________________________________")
 
 
-@app.message(re.compile("(.*)plan and submit from postera molecule set(.*)"))
-def plan_and_submit_postera(say, context):
-    logger.debug("Planning and submitting from postera")
-    # create
-    postera_molset_name = "X"
-    campaign = "Y"
-    project = "P"
-    exp_protocol = "XXXX"
+@app.message("plan and submit from postera molecule set")
+def plan_and_submit_postera(message, say, context, logger):
+    logger.info("Planning and submitting from postera")
+
+    content = message.get("text")
+    # parse message for molset using regex
+    pattern = r"from postera molecule set\s+.*?(\b[^\s]+\b)\s+to"
+    match = re.search(pattern, content)
+    if match:
+        postera_molset_name = match.group(1)
+        logger.info(f"Postera molecule set name is {postera_molset_name}")
+    else:
+        say(
+            "Could not find postera molecule set name in the message, unable to proceed"
+        )
+        return
+
+    pattern = r"to campaign\s+.*?(\b[^\s]+\b)\s+and project\s+.*?(\b[^\s]+\b)"
+    match = re.search(pattern, content)
+    if match:
+        campaign = match.group(1)
+        logger.info(f"Campaign is {campaign}")
+        project = match.group(2)
+        logger.info(f"Project is {project}")
+    else:
+        say("Could not find campaign and project in the message, unable to proceed")
+        return
+
+    # check we have both campaign and project
+    if not campaign or not project:
+        say("Could not find campaign and project in the message, unable to proceed")
+        return
+
+    # check we have a valid campaign
+
+    if campaign not in ("public", "confidential"):
+        say(
+            "Invalid campaign, must be one of: (public, confidential) unable to proceed"
+        )
+        return
+
+    # check for attatched file
+    files = message.get("files")
+    if not files:
+        logger.info("No file attatched, unable to proceed")
+        say("No receptor file attatched, unable to proceed")
+        return
+    else:
+        if len(files) > 1:
+            logger.info("More than one file attatched, unable to proceed")
+            say("More than one file attatched, unable to proceed")
+            return
+        # get the first file
+        file = files[0]
+        # check if it is a pdb file
+        file_extn = file.get("title").split(".")[-1]
+        if file_extn != "pdb":
+            say("Attatched file is not a pdb file, unable to proceed")
+            return
 
     factory = FreeEnergyCalculationFactory()
 
     # load ligands from postera
-    input_ligands = PosteraFactory(molset_name=postera_molset_name).load()
+    try:
+        input_ligands = PosteraFactory(molecule_set_name=postera_molset_name).pull()
+    except Exception as e:
+        say(f"Failed to pull ligands from postera with error: {e}")
+        return
 
     # load receptor from attatched file
-
-    receptor = ProteinComponent.from_pdb_file(receptor)
+    # read into temp file
+    try:
+        with tempfile.NamedTemporaryFile() as temp:
+            logger.info(f"file: {file.get('url_private_download')}")
+            _download_slack_file(file.get("url_private_download"), temp.name)
+            receptor = ProteinComponent.from_pdb_file(temp.name)
+    except Exception as e:
+        say(f"Failed to load receptor from attatched file with error: {e}")
+        return
 
     dataset_name = postera_molset_name + "_" + str(uuid.uuid4())
 
@@ -121,8 +200,7 @@ def plan_and_submit_postera(say, context):
 
 
 @app.message(re.compile("(.*)plan and submit from JSON(.*)"))
-def plan_and_submit_json(say, context):
-    ...
+def plan_and_submit_json(say, context, logger): ...
 
 
 @app.event("message")
