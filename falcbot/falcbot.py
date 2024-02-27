@@ -205,18 +205,19 @@ def plan_and_submit_postera(message, say, context, logger):
     s3 = S3.from_settings(S3Settings())
 
     # push factory to cloudfront exposed bucket
-    factory_fname = f"fec_factory_{dataset_name}.json"
+    factory_fname = f"fec_factory-{dataset_name}.json"
     factory_bucket_path = f"alchemy/{dataset_name}/{factory_fname}"
-    with NamedTemporaryFile(factory_fname) as temp:
+    with NamedTemporaryFile() as temp:
         factory.to_file(filename=temp.name)
         factory_cf_url = _push_to_s3_with_cloudfront(
             s3, cf, factory_bucket_path, temp.name, content_type="application/json"
         )
 
-    planned_network_fname = f"planned_network_{dataset_name}.json"
+    planned_network_fname = f"planned_network-{dataset_name}.json"
     planned_network_bucket_path = f"alchemy/{dataset_name}/{planned_network_fname}"
+    print(planned_network)
     # push planned network to cloudfront exposed bucket
-    with NamedTemporaryFile("planned_network.json") as temp:
+    with NamedTemporaryFile() as temp:
         planned_network.to_file(filename=temp.name)
         planned_network_cf_url = _push_to_s3_with_cloudfront(
             s3,
