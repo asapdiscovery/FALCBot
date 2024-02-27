@@ -2,8 +2,8 @@ import logging
 import re
 import uuid
 import logging
-import tempfile
-
+from datetime import datetime, timedelta
+from tempfile import NamedTemporaryFile
 from pydantic import BaseSettings, Field
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -16,7 +16,9 @@ from asapdiscovery.alchemy.schema.fec import (
 )
 from asapdiscovery.alchemy.utils import AlchemiscaleHelper
 from asapdiscovery.data.services.postera.postera_factory import PosteraFactory
-
+from asapdiscovery.data.services.services_config import CloudfrontSettings, S3Settings
+from asapdiscovery.data.services.aws.cloudfront import CloudFront
+from asapdiscovery.data.services.aws.s3 import S3
 
 # logger in a global context
 logging.basicConfig(level=logging.DEBUG)
@@ -47,6 +49,21 @@ def _download_slack_file(file_url, file_name):
     with open(file_name, "wb") as f:
         for chunk in response.iter_content(chunk_size=2048):
             f.write(chunk)
+
+
+def _push_to_s3_with_cloudfront(
+    s3_instance: S3,
+    cloudfront_instance: CloudFront,
+    bucket_path: str,
+    file_path: str,
+    expires_delta: timedelta = timedelta(days=365 * 5),
+    content_type: str = "application/json",
+) -> str:
+    # push to s3
+    s3_instance.push_file(file_path, location=bucket_path, content_type=content_type)
+    # generate cloudfront url
+    expiry = datetime.utcnow() + expires_delta
+    return cloudfront_instance.generate_signed_url(bucket_path, expiry)
 
 
 @app.message(re.compile("(hi|hello|hey)"))
@@ -164,7 +181,7 @@ def plan_and_submit_postera(message, say, context, logger):
     # load receptor from attatched file
     # read into temp file
     try:
-        with tempfile.NamedTemporaryFile() as temp:
+        with NamedTemporaryFile() as temp:
             logger.info(f"file: {file.get('url_private_download')}")
             _download_slack_file(file.get("url_private_download"), temp.name)
             receptor = ProteinComponent.from_pdb_file(temp.name)
@@ -182,10 +199,37 @@ def plan_and_submit_postera(message, say, context, logger):
         experimental_protocol=None,
     )
 
+    # we want to return links to the factory and planned network
+    # we do this through artifacts in a cloudfront exposed bucket
+    cf = CloudFront.from_settings(CloudfrontSettings())
+    s3 = S3.from_settings(S3Settings())
+
+    # push factory to cloudfront exposed bucket
+    factory_fname = f"fec_factory_{dataset_name}.json"
+    factory_bucket_path = f"alchemy/{dataset_name}/{factory_fname}"
+    with NamedTemporaryFile(factory_fname) as temp:
+        factory.to_file(filename=temp.name)
+        factory_cf_url = _push_to_s3_with_cloudfront(
+            s3, cf, factory_bucket_path, temp.name, content_type="application/json"
+        )
+
+    planned_network_fname = f"planned_network_{dataset_name}.json"
+    planned_network_bucket_path = f"alchemy/{dataset_name}/{planned_network_fname}"
+    # push planned network to cloudfront exposed bucket
+    with NamedTemporaryFile("planned_network.json") as temp:
+        planned_network.to_file(filename=temp.name)
+        planned_network_cf_url = _push_to_s3_with_cloudfront(
+            s3,
+            cf,
+            planned_network_bucket_path,
+            temp.name,
+            content_type="application/json",
+        )
+
     # submit the network
     client = AlchemiscaleHelper()
 
-    network_scope = Scope(org="asapdiscovery", campaign=campaign, project=project)
+    network_scope = Scope(org="asap", campaign=campaign, project=project)
 
     submitted_network = client.create_network(
         planned_network=planned_network, scope=network_scope
@@ -193,14 +237,15 @@ def plan_and_submit_postera(message, say, context, logger):
     task_ids = client.action_network(
         planned_network=submitted_network, prioritize=False
     )
-    logger.debug(f"Submitted network {submitted_network} with task ids {task_ids}")
+    logger.info(
+        f"Submitted network {submitted_network} with task ids {task_ids} to campaign {campaign} and project {project}."
+    )
+    logger.info(f"Factory url: {factory_cf_url}")
+    logger.info(f"Planned network url: {planned_network_cf_url}")
+    logger.info(f"Data set name: {dataset_name}")
     say(
         f"Submitted network {submitted_network} with task ids {task_ids} to campaign {campaign} and project {project}."
     )
-
-
-@app.message(re.compile("(.*)plan and submit from JSON(.*)"))
-def plan_and_submit_json(say, context, logger): ...
 
 
 @app.event("message")
@@ -208,6 +253,6 @@ def base_handle_message_events(body, logger):
     logger.info(body)
 
 
-# Start your app
+# Start app
 if __name__ == "__main__":
     SocketModeHandler(app, settings.SLACK_APP_TOKEN).start()
