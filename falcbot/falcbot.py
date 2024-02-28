@@ -14,11 +14,16 @@ from asapdiscovery.alchemy.schema.fec import (
     FreeEnergyCalculationFactory,
     AlchemiscaleSettings,
 )
+from asapdiscovery.alchemy.schema.prep_workflow import AlchemyPrepWorkflow
 from asapdiscovery.alchemy.utils import AlchemiscaleHelper
+
+from asapdiscovery.data.schema.complex import Complex, PreppedComplex
 from asapdiscovery.data.services.postera.postera_factory import PosteraFactory
 from asapdiscovery.data.services.services_config import CloudfrontSettings, S3Settings
 from asapdiscovery.data.services.aws.cloudfront import CloudFront
 from asapdiscovery.data.services.aws.s3 import S3
+
+from multiprocessing import cpu_count
 
 # logger in a global context
 logging.basicConfig(level=logging.DEBUG)
@@ -109,8 +114,8 @@ def query_all_networks(say, context, logger):
                 say("________________________________")
 
 
-@app.message("plan and submit from postera molecule set")
-def plan_and_submit_postera(message, say, context, logger):
+@app.message("plan, prep and submit from postera molecule set")
+def plan_prep_and_submit_postera(message, say, context, logger):
     logger.info("Planning and submitting from postera")
 
     content = message.get("text")
@@ -169,7 +174,15 @@ def plan_and_submit_postera(message, say, context, logger):
             say("Attatched file is not a pdb file, unable to proceed")
             return
 
-    factory = FreeEnergyCalculationFactory()
+    pattern = r"(?<=SMARTS )([^ ]+)"
+    match = re.search(pattern, content)
+    if match:
+        core_smarts = match.group(1)
+        logger.info(f"Core SMARTS is {core_smarts}")
+    else:
+        core_smarts = None
+        say("Could not find core SMARTS in the message, unable to proceed")
+        return
 
     # load ligands from postera
     try:
@@ -178,19 +191,69 @@ def plan_and_submit_postera(message, say, context, logger):
         say(f"Failed to pull ligands from postera with error: {e}")
         return
 
+    # create dataset name
+    dataset_name = postera_molset_name + "_" + str(uuid.uuid4())
+
+    # run prep workflow
+    logger.info("Running prep workflow")
+    prep_factory = AlchemyPrepWorkflow(core_smarts=core_smarts)
+
     # load receptor from attatched file
     # read into temp file
     try:
-        with NamedTemporaryFile() as temp:
+        with NamedTemporaryFile(suffix=".pdb") as temp:
             logger.info(f"file: {file.get('url_private_download')}")
             _download_slack_file(file.get("url_private_download"), temp.name)
-            receptor = ProteinComponent.from_pdb_file(temp.name)
+            ref_complex = Complex.from_pdb(
+                temp.name,
+                target_kwargs={"target_name": f"{dataset_name}_receptor"},
+                ligand_kwargs={"compound_name": f"{dataset_name}_receptor_ligand"},
+            )
     except Exception as e:
         say(f"Failed to load receptor from attatched file with error: {e}")
         return
+    # prep the complex
+    logger.info("Prepping complex")
+    prepped_ref_complex = PreppedComplex.from_complex(ref_complex)
 
-    dataset_name = postera_molset_name + "_" + str(uuid.uuid4())
+    import time
 
+    logger.info("Creating alchemy dataset")
+    processors = cpu_count() - 1
+    logger.info(f"Using {processors} processors")
+    start_time = time.time()
+    alchemy_dataset = prep_factory.create_alchemy_dataset(
+        dataset_name=dataset_name,
+        ligands=input_ligands,
+        reference_complex=prepped_ref_complex,
+        processors=processors,
+    )
+    end_time = time.time()
+    execution_time = end_time - start_time
+    logger.info(f"Time taken to create alchemy dataset: {execution_time} seconds")
+
+    # check for failed ligands
+    logger.info("Checking for failed ligands")
+    if alchemy_dataset.failed_ligands:
+        fails = sum([len(values) for values in alchemy_dataset.failed_ligands.values()])
+        say(f"Failed to prep {fails} ligands")
+        # add more detail
+
+    # we have our working ligands
+    input_ligands = alchemy_dataset.posed_ligands
+
+    # ok now onto  actual network creation
+    logger.info("Creating factory and planned network")
+    factory = FreeEnergyCalculationFactory()
+
+    # create receptor
+    # write to a temp pdb file and read back in
+    with NamedTemporaryFile(suffix=".pdb") as fp:
+        alchemy_dataset.reference_complex.target.to_pdb_file(fp.name)
+        receptor = ProteinComponent.from_pdb_file(fp.name)
+
+    # create factory
+    logger.info("Planning network with factory and planned network")
     planned_network = factory.create_fec_dataset(
         dataset_name=dataset_name,
         receptor=receptor,
@@ -227,11 +290,19 @@ def plan_and_submit_postera(message, say, context, logger):
             content_type="application/json",
         )
 
+    logger.info(f"Factory url: {factory_cf_url}")
+    logger.info(f"Planned network url: {planned_network_cf_url}")
+    logger.info(f"Data set name: {dataset_name}")
+    say(
+        f"Your dataset {dataset_name} has been made, factory and planned network links are {factory_cf_url} and {planned_network_cf_url} respectively."
+    )
+
     # submit the network
     client = AlchemiscaleHelper()
 
     network_scope = Scope(org="asap", campaign=campaign, project=project)
 
+    raise Exception("stop here")
     submitted_network = client.create_network(
         planned_network=planned_network, scope=network_scope
     )
@@ -241,12 +312,19 @@ def plan_and_submit_postera(message, say, context, logger):
     logger.info(
         f"Submitted network {submitted_network} with task ids {task_ids} to campaign {campaign} and project {project}."
     )
-    logger.info(f"Factory url: {factory_cf_url}")
-    logger.info(f"Planned network url: {planned_network_cf_url}")
-    logger.info(f"Data set name: {dataset_name}")
     say(
         f"Submitted network {submitted_network} with task ids {task_ids} to campaign {campaign} and project {project}."
     )
+
+
+@app.message(re.compile("plan and submit from ligand and receptor"))
+def plan_and_submit_from_ligand_and_receptor():
+    ...
+
+
+@app.message(re.compile("submit from planned network"))
+def submit_from_planned_network():
+    ...  # do something with settings
 
 
 @app.event("message")
