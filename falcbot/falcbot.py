@@ -18,6 +18,8 @@ from asapdiscovery.alchemy.schema.prep_workflow import AlchemyPrepWorkflow
 from asapdiscovery.alchemy.utils import AlchemiscaleHelper
 
 from asapdiscovery.data.schema.complex import Complex, PreppedComplex
+from asapdiscovery.data.schema.ligand import write_ligands_to_multi_sdf
+
 from asapdiscovery.data.services.postera.postera_factory import PosteraFactory
 from asapdiscovery.data.services.services_config import CloudfrontSettings, S3Settings
 from asapdiscovery.data.services.aws.cloudfront import CloudFront
@@ -26,7 +28,7 @@ from asapdiscovery.data.services.aws.s3 import S3
 from multiprocessing import cpu_count
 
 # logger in a global context
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 
 class SlackSettings(BaseSettings):
@@ -69,6 +71,13 @@ def _push_to_s3_with_cloudfront(
     # generate cloudfront url
     expiry = datetime.utcnow() + expires_delta
     return cloudfront_instance.generate_signed_url(bucket_path, expiry)
+
+
+def _link_to_block_data(link, text):
+    return {
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": f"<{link}|{text}>"},
+    }
 
 
 @app.message(re.compile("(hi|hello|hey)"))
@@ -196,6 +205,9 @@ def plan_prep_and_submit_postera(message, say, context, logger):
 
     # run prep workflow
     logger.info("Running prep workflow")
+    say(
+        "Preparing your calculation, please wait this may take a while, ... :ghost: :ghost: :ghost:"
+    )
     prep_factory = AlchemyPrepWorkflow(core_smarts=core_smarts)
 
     # load receptor from attatched file
@@ -240,7 +252,7 @@ def plan_prep_and_submit_postera(message, say, context, logger):
         # add more detail
 
     # we have our working ligands
-    input_ligands = alchemy_dataset.posed_ligands
+    posed_ligands = alchemy_dataset.posed_ligands
 
     # ok now onto  actual network creation
     logger.info("Creating factory and planned network")
@@ -257,7 +269,7 @@ def plan_prep_and_submit_postera(message, say, context, logger):
     planned_network = factory.create_fec_dataset(
         dataset_name=dataset_name,
         receptor=receptor,
-        ligands=input_ligands,
+        ligands=posed_ligands,
         central_ligand=None,
         experimental_protocol=None,
     )
@@ -278,7 +290,6 @@ def plan_prep_and_submit_postera(message, say, context, logger):
 
     planned_network_fname = f"planned_network-{dataset_name}.json"
     planned_network_bucket_path = f"alchemy/{dataset_name}/{planned_network_fname}"
-    print(planned_network)
     # push planned network to cloudfront exposed bucket
     with NamedTemporaryFile() as temp:
         planned_network.to_file(filename=temp.name)
@@ -290,41 +301,83 @@ def plan_prep_and_submit_postera(message, say, context, logger):
             content_type="application/json",
         )
 
+    ligands_fname = f"ligands-{dataset_name}.sdf"
+    ligands_fname_bucket_path = f"alchemy/{dataset_name}/{ligands_fname}"
+    # push planned network to cloudfront exposed bucket
+    with NamedTemporaryFile(suffix=".sdf") as temp:
+        alchemy_dataset.save_posed_ligands(temp.name)
+        ligand_cf_url = _push_to_s3_with_cloudfront(
+            s3,
+            cf,
+            ligands_fname_bucket_path,
+            temp.name,
+            content_type="text/plain",
+        )
+
+    receptor_fname = f"receptor-{dataset_name}.pdb"
+    receptor_fname_bucket_path = f"alchemy/{dataset_name}/{receptor_fname}"
+    # push planned network to cloudfront exposed bucket
+    with NamedTemporaryFile(suffix=".pdb") as temp:
+        alchemy_dataset.reference_complex.target.to_pdb_file(temp.name)
+        receptor_cf_url = _push_to_s3_with_cloudfront(
+            s3,
+            cf,
+            receptor_fname_bucket_path,
+            temp.name,
+            content_type="text/plain",
+        )
+
+    logger.info(f"Data set name: {dataset_name}")
     logger.info(f"Factory url: {factory_cf_url}")
     logger.info(f"Planned network url: {planned_network_cf_url}")
-    logger.info(f"Data set name: {dataset_name}")
-    say(
-        f"Your dataset {dataset_name} has been made, factory and planned network links are {factory_cf_url} and {planned_network_cf_url} respectively."
-    )
+    logger.info(f"Ligands url: {ligand_cf_url}")
+    logger.info(f"Receptor url: {receptor_cf_url}")
+
+    # make block data from the links
+    block_data = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "Your calculation is ready! Here are the links to the data :pill: :pill: :pill:",
+            },
+        },
+        _link_to_block_data(ligand_cf_url, "Ligand SDF file"),
+        _link_to_block_data(receptor_cf_url, "Receptor PDB file"),
+        _link_to_block_data(factory_cf_url, "FECFactory JSON"),
+        _link_to_block_data(planned_network_cf_url, "PlannedNetwork JSON"),
+    ]
+
+    say("Calculation is ready!", blocks=block_data)
 
     # submit the network
     client = AlchemiscaleHelper()
 
     network_scope = Scope(org="asap", campaign=campaign, project=project)
 
-    raise Exception("stop here")
+    say(
+        f"Submitting network to campaign {campaign} and project {project} on Alchemiscale :rocket: :rocket: :rocket:"
+    )
     submitted_network = client.create_network(
         planned_network=planned_network, scope=network_scope
     )
     task_ids = client.action_network(
         planned_network=submitted_network, prioritize=False
     )
-    logger.info(
-        f"Submitted network {submitted_network} with task ids {task_ids} to campaign {campaign} and project {project}."
+    logger.debug(
+        f"Submitted network {submitted_network.results.network_key} with task ids {task_ids} to campaign {campaign} and project {project}."
     )
     say(
-        f"Submitted network {submitted_network} with task ids {task_ids} to campaign {campaign} and project {project}."
+        f"Submitted network {submitted_network.results.network_key}, we are all done here! :sunglasses: :sunglasses: :sunglasses:"
     )
 
 
 @app.message(re.compile("plan and submit from ligand and receptor"))
-def plan_and_submit_from_ligand_and_receptor():
-    ...
+def plan_and_submit_from_ligand_and_receptor(): ...
 
 
 @app.message(re.compile("submit from planned network"))
-def submit_from_planned_network():
-    ...  # do something with settings
+def submit_from_planned_network(): ...  # do something with settings
 
 
 @app.event("message")
