@@ -126,7 +126,6 @@ def query_all_networks(say, context, logger):
 @app.message("plan, prep and submit from postera molecule set")
 def plan_prep_and_submit_postera(message, say, context, logger):
     logger.info("Planning and submitting from postera")
-
     content = message.get("text")
     # parse message for molset using regex
     pattern = r"from postera molecule set\s+.*?(\b[^\s]+\b)\s+to"
@@ -382,7 +381,7 @@ def submit_from_planned_network(): ...  # do something with settings
 
 @app.event("message")
 def base_handle_message_events(body, logger):
-    logger.info(body)
+    logger.debug(body)
 
 
 # Start app
