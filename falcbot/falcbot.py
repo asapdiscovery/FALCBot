@@ -38,13 +38,10 @@ class SlackSettings(BaseSettings):
     SLACK_APP_TOKEN: str = Field(
         description="The Slack app token.", env="SLACK_APP_TOKEN"
     )
-    SLACK_SIGNING_SECRET: str = Field(description="Slack App signing secret", env="SLACK_SIGNING_SECRET")
-
-    SLACK_HTTP_PORT: int = Field(3000, description="Slack HTTP port", env="HTTP Port")
 
 
 settings = SlackSettings()
-app = App(token=settings.SLACK_BOT_TOKEN,  signing_secret=settings.SLACK_SIGNING_SECRET)
+app = App(token=settings.SLACK_BOT_TOKEN)
 
 _status_keys = ["complete", "running", "waiting", "error", "invalid", "deleted"]
 
@@ -389,5 +386,4 @@ def base_handle_message_events(body, logger):
 
 # Start app
 if __name__ == "__main__":
-    app.start(port=settings.SLACK_HTTP_PORT)
-
+    SocketModeHandler(app, settings.SLACK_APP_TOKEN).start()
