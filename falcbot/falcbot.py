@@ -379,6 +379,32 @@ def plan_and_submit_from_ligand_and_receptor(): ...
 def submit_from_planned_network(): ...  # do something with settings
 
 
+@app.message(re.compile("infer pIC50 from SMILES"))
+def make_pic50_pred(message, say, context, logger)
+    content = message.get("text")
+    # parse message for molset using regex
+    pattern = r"infer pIC50 from SMILES\s+.*?(\b[^\s]+\b)\s for target\s+.*?(\b[^\s]+\b)"
+    match = re.search(pattern, content)
+    if match:
+        smiles = match.group(1)
+        target = match.group(2)
+    else:
+        say("Could not find SMILES in the message, unable to proceed")
+        return
+    if not _is_valid_smiles(smiles):
+        say("Invalid SMILES, unable to proceed")
+        return
+    if not target in TargetTags.get_values():
+        say("Invalid target, unable to proceed")
+        return
+    # make prediction
+    gs = GATScorer.from_latest_by_target(target)
+    pred = gs.inference_cls.predict_from_smiles(smiles)
+    say(f"Predicted pIC50 for {smiles} is {pred}")
+    
+        
+
+
 @app.event("message")
 def base_handle_message_events(body, logger):
     logger.debug(body)
