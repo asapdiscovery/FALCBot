@@ -114,6 +114,7 @@ def query_all_networks(say, context, logger):
     say("Checking for running networks...")
 
     running_networks = client._client.query_networks()
+
     if not running_networks:
         say("No networks are running currently")
     else:
@@ -130,6 +131,7 @@ def query_all_networks(say, context, logger):
                     state_breakdown += f"{state}: {network_status.get(state, 0)} "
                 say(state_breakdown)
                 say("________________________________")
+    say("Done :smile:")
 
 
 @app.message("plan, prep and submit from postera molecule set")
