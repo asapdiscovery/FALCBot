@@ -25,6 +25,12 @@ from asapdiscovery.data.services.services_config import CloudfrontSettings, S3Se
 from asapdiscovery.data.services.aws.cloudfront import CloudFront
 from asapdiscovery.data.services.aws.s3 import S3
 
+from asapdiscovery.ml.inference import GATInference
+from asapdiscovery.data.services.postera.manifold_data_validation import TargetTags
+
+
+from rdkit import Chem
+
 from multiprocessing import cpu_count
 
 # logger in a global context
@@ -80,15 +86,14 @@ def _link_to_block_data(link, text):
     }
 
 
-@app.message(re.compile("(hi|hello|hey)"))
-def say_hello_regex(say, context):
-    # regular expression matches are inside of context.matches
-    print(context)
-    greeting = context["matches"][0]
-    say(f"{greeting}, how are you?")
+def _is_valid_smiles(smi):
+    m = Chem.MolFromSmiles(smi)
+    if m is None:
+        return False
+    else:
+        return True
 
-
-@app.message(re.compile("(.*)are you alive(.*)"))
+@app.message(re.compile("(.*)are you alive falcbot(.*)"))
 def are_you_alive(say, context):
     say(f"yes im alive!")
 
@@ -380,7 +385,7 @@ def submit_from_planned_network(): ...  # do something with settings
 
 
 @app.message(re.compile("infer pIC50 from SMILES"))
-def make_pic50_pred(message, say, context, logger)
+def make_pic50_pred(message, say, context, logger):
     content = message.get("text")
     # parse message for molset using regex
     pattern = r"infer pIC50 from SMILES\s+.*?(\b[^\s]+\b)\s for target\s+.*?(\b[^\s]+\b)"
@@ -398,9 +403,9 @@ def make_pic50_pred(message, say, context, logger)
         say("Invalid target, unable to proceed")
         return
     # make prediction
-    gs = GATScorer.from_latest_by_target(target)
-    pred = gs.inference_cls.predict_from_smiles(smiles)
-    say(f"Predicted pIC50 for {smiles} is {pred}")
+    gs = GATInference.from_latest_by_target(target)
+    pred = gs.predict_from_smiles(smiles)
+    say(f"Predicted pIC50 for {smiles} is {pred} using model {gs.model_name}")
     
         
 

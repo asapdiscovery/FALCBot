@@ -20,6 +20,22 @@ dependencies:
   - pydantic<2.0a0
 
 
+  # ml
+  - pytorch
+  - pytorch_geometric >=2.5.0
+  - pytorch_cluster
+  - pytorch_scatter
+  - pytorch_sparse
+  - numpy
+  - h5py
+  - e3nn
+  - dgl
+  - dgllife
+  - pooch
+  - mtenn >=0.5.1
+  - wandb
+
+
   # alchemy
   - numpy
   - gufe =>0.9.5
@@ -45,5 +61,7 @@ dependencies:
     - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-data&subdirectory=asapdiscovery-data
     - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-modeling&subdirectory=asapdiscovery-modeling
     - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-docking&subdirectory=asapdiscovery-docking
+    - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-ml&subdirectory=asapdiscovery-ml
+
 
 
