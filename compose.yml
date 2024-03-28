@@ -5,6 +5,8 @@ services:
     command: python falcbot/falcbot.py
     build: .
     container_name: "slackbot"
+    ports:
+      - 80:80
     volumes:
       - type: bind
         source: $HOME/.OpenEye/

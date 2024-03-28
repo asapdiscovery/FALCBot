@@ -34,7 +34,7 @@ from rdkit import Chem
 from multiprocessing import cpu_count
 
 # logger in a global context
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 
 class SlackSettings(BaseSettings):
