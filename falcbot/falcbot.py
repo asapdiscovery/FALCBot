@@ -392,7 +392,7 @@ def submit_from_planned_network(): ...  # do something with settings
 def make_pic50_pred(message, say, context, logger):
     content = message.get("text")
     # parse message for molset using regex
-    pattern = r"infer pIC50 from SMILES ([\w-]+) for target ([\w-]+)"
+    pattern = r"infer pIC50 from SMILES (.*?) for target (.*?)"
     match = re.search(pattern, content)
     if match:
         smiles = match.group(1)
