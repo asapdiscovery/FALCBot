@@ -92,6 +92,10 @@ def _is_valid_smiles(smi):
         return False
     else:
         return True
+    
+def _rdkit_smiles_roundtrip(smi: str) -> str:
+    mol = Chem.MolFromSmiles(smi)
+    return Chem.MolToSmiles(mol)
 
 @app.message(re.compile("(.*)are you alive falcbot(.*)"))
 def are_you_alive(say, context):
@@ -388,21 +392,22 @@ def submit_from_planned_network(): ...  # do something with settings
 def make_pic50_pred(message, say, context, logger):
     content = message.get("text")
     # parse message for molset using regex
-    pattern = r"infer pIC50 from SMILES\s+.*?(\b[^\s]+\b)\s for target\s+.*?(\b[^\s]+\b)"
+    pattern = r"infer pIC50 from SMILES ([\w-]+) for target ([\w-]+)"
     match = re.search(pattern, content)
     if match:
         smiles = match.group(1)
         target = match.group(2)
     else:
-        say("Could not find SMILES in the message, unable to proceed")
+        say("Could not find SMILES and Target in the message, unable to proceed")
         return
     if not _is_valid_smiles(smiles):
-        say("Invalid SMILES, unable to proceed")
+        say(f"Invalid SMILES {smiles}, unable to proceed")
         return
     if not target in TargetTags.get_values():
-        say("Invalid target, unable to proceed")
+        say(f"Invalid target {target}, unable to proceed")
         return
     # make prediction
+    smiles = _rdkit_smiles_roundtrip(smiles)
     gs = GATInference.from_latest_by_target(target)
     pred = gs.predict_from_smiles(smiles)
     say(f"Predicted pIC50 for {smiles} is {pred} using model {gs.model_name}")
