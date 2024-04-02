@@ -412,7 +412,7 @@ def make_pic50_pred(message, say, context, logger):
     smiles = _rdkit_smiles_roundtrip(smiles)
     gs = GATInference.from_latest_by_target(target)
     pred = gs.predict_from_smiles(smiles)
-    say(f"Predicted pIC50 for {smiles} is {pred} using model {gs.model_name} :test_tube:")
+    say(f"Predicted pIC50 for {smiles} is {pred:.1f} using model {gs.model_name} :test_tube:")
     
         
 
