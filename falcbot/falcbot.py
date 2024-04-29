@@ -92,10 +92,12 @@ def _is_valid_smiles(smi):
         return False
     else:
         return True
-    
+
+
 def _rdkit_smiles_roundtrip(smi: str) -> str:
     mol = Chem.MolFromSmiles(smi)
     return Chem.MolToSmiles(mol)
+
 
 @app.message(re.compile("(.*)are you alive falcbot(.*)"))
 def are_you_alive(say, context):
@@ -134,12 +136,15 @@ def query_all_networks(say, context, logger):
     say("Done :smile:")
 
 
-@app.message("plan, prep and submit from postera molecule set")
+@app.message("(?i)run FEC")
 def plan_prep_and_submit_postera(message, say, context, logger):
     logger.info("Planning and submitting from postera")
+    say(
+        "Preparing your calculation, please wait this may take a while, ... :ghost: :ghost: :ghost:"
+    )
     content = message.get("text")
     # parse message for molset using regex
-    pattern = r"from postera molecule set\s+.*?(\b[^\s]+\b)\s+to"
+    pattern = r"on series\s+.*?(\b[^\s]+\b)+"
     match = re.search(pattern, content)
     if match:
         postera_molset_name = match.group(1)
@@ -150,29 +155,8 @@ def plan_prep_and_submit_postera(message, say, context, logger):
         )
         return
 
-    pattern = r"to campaign\s+.*?(\b[^\s]+\b)\s+and project\s+.*?(\b[^\s]+\b)"
-    match = re.search(pattern, content)
-    if match:
-        campaign = match.group(1)
-        logger.info(f"Campaign is {campaign}")
-        project = match.group(2)
-        logger.info(f"Project is {project}")
-    else:
-        say("Could not find campaign and project in the message, unable to proceed")
-        return
-
-    # check we have both campaign and project
-    if not campaign or not project:
-        say("Could not find campaign and project in the message, unable to proceed")
-        return
-
-    # check we have a valid campaign
-
-    if campaign not in ("public", "confidential"):
-        say(
-            "Invalid campaign, must be one of: (public, confidential) unable to proceed"
-        )
-        return
+    campaign = "confidential"
+    project = postera_molset_name
 
     # check for attatched file
     files = message.get("files")
@@ -193,16 +177,6 @@ def plan_prep_and_submit_postera(message, say, context, logger):
             say("Attatched file is not a pdb file, unable to proceed")
             return
 
-    pattern = r"(?<=SMARTS )([^ ]+)"
-    match = re.search(pattern, content)
-    if match:
-        core_smarts = match.group(1)
-        logger.info(f"Core SMARTS is {core_smarts}")
-    else:
-        core_smarts = None
-        say("Could not find core SMARTS in the message, unable to proceed")
-        return
-
     # load ligands from postera
     try:
         input_ligands = PosteraFactory(molecule_set_name=postera_molset_name).pull()
@@ -210,18 +184,21 @@ def plan_prep_and_submit_postera(message, say, context, logger):
         say(f"Failed to pull ligands from postera with error: {e}")
         return
 
+    say(
+        f"Input series has {len(input_ligands)} ligands, this may take a while to process. I'll let you know once its running. Please be patient :ghost: :ghost: :ghost:"
+    )
+
     # create dataset name
-    dataset_name = postera_molset_name + "_" + str(uuid.uuid4())
+    dataset_name = postera_molset_name + "_" + "FALCBot"
 
     # run prep workflow
     logger.info("Running prep workflow")
-    say(
-        "Preparing your calculation, please wait this may take a while, ... :ghost: :ghost: :ghost:"
-    )
-    prep_factory = AlchemyPrepWorkflow(core_smarts=core_smarts)
+
+    prep_factory = AlchemyPrepWorkflow()
 
     # load receptor from attatched file
     # read into temp file
+    # TODO move to pre-prepped PDBs hosted on the cloud instance and pull from there
     try:
         with NamedTemporaryFile(suffix=".pdb") as temp:
             logger.info(f"file: {file.get('url_private_download')}")
@@ -343,31 +320,30 @@ def plan_prep_and_submit_postera(message, say, context, logger):
     logger.info(f"Ligands url: {ligand_cf_url}")
     logger.info(f"Receptor url: {receptor_cf_url}")
 
-    # make block data from the links
-    block_data = [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "Your calculation is ready! Here are the links to the data :pill: :pill: :pill:",
-            },
-        },
-        _link_to_block_data(ligand_cf_url, "Ligand SDF file"),
-        _link_to_block_data(receptor_cf_url, "Receptor PDB file"),
-        _link_to_block_data(factory_cf_url, "FECFactory JSON"),
-        _link_to_block_data(planned_network_cf_url, "PlannedNetwork JSON"),
-    ]
+    # TODO move the returned links to a leveldb or something
 
-    say("Calculation is ready!", blocks=block_data)
+    # # make block data from the links
+    # block_data = [
+    #     {
+    #         "type": "section",
+    #         "text": {
+    #             "type": "mrkdwn",
+    #             "text": "Your calculation is ready! Here are the links to the data :pill: :pill: :pill:",
+    #         },
+    #     },
+    #     _link_to_block_data(ligand_cf_url, "Ligand SDF file"),
+    #     _link_to_block_data(receptor_cf_url, "Receptor PDB file"),
+    #     _link_to_block_data(factory_cf_url, "FECFactory JSON"),
+    #     _link_to_block_data(planned_network_cf_url, "PlannedNetwork JSON"),
+    # ]
+
+    # say("Calculation is ready!", blocks=block_data)
 
     # submit the network
     client = AlchemiscaleHelper()
 
     network_scope = Scope(org="asap", campaign=campaign, project=project)
 
-    say(
-        f"Submitting network to campaign {campaign} and project {project} on Alchemiscale :rocket: :rocket: :rocket:"
-    )
     submitted_network = client.create_network(
         planned_network=planned_network, scope=network_scope
     )
@@ -377,24 +353,25 @@ def plan_prep_and_submit_postera(message, say, context, logger):
     logger.debug(
         f"Submitted network {submitted_network.results.network_key} with task ids {task_ids} to campaign {campaign} and project {project}."
     )
-    say(
-        f"Submitted network {submitted_network.results.network_key}, we are all done here! :sunglasses: :sunglasses: :sunglasses:"
-    )
+
+    say("Simulations are running! :rocket: :rocket: :rocket:")
 
 
 @app.message(re.compile("plan and submit from ligand and receptor"))
-def plan_and_submit_from_ligand_and_receptor(): ...
+def plan_and_submit_from_ligand_and_receptor():
+    ...
 
 
 @app.message(re.compile("submit from planned network"))
-def submit_from_planned_network(): ...  # do something with settings
+def submit_from_planned_network():
+    ...  # do something with settings
 
 
-@app.message(re.compile("infer pIC50 from SMILES"))
+@app.message(re.compile("(?i)predict pIC50 for SMILES"))
 def make_pic50_pred(message, say, context, logger):
     content = message.get("text")
     # parse message for molset using regex
-    pattern = r"SMILES\s+(.+?)\s+for\s+target\s+(.+)"
+    pattern = r"(?i)SMILES\s+(.+?)\s+for\s+target\s+(.+)"
     match = re.search(pattern, content)
     if match:
         smiles = match.group(1)
@@ -406,20 +383,34 @@ def make_pic50_pred(message, say, context, logger):
         say(f"Invalid SMILES {smiles}, unable to proceed")
         return
     if not target in TargetTags.get_values():
-        say(f"Invalid target {target}, unable to proceed")
+        say(
+            f"Invalid target {target}, not in: {TargetTags.get_values()}; unable to proceed"
+        )
         return
     # make prediction
     smiles = _rdkit_smiles_roundtrip(smiles)
     gs = GATInference.from_latest_by_target(target)
     pred = gs.predict_from_smiles(smiles)
-    say(f"Predicted pIC50 for {smiles} is {pred} using model {gs.model_name} :test_tube:")
-    
-        
+    say(
+        f"Predicted pIC50 for {smiles} is {pred:.2f} using model {gs.model_name} :test_tube:"
+    )
+
+    # TODO make pred for every target if none specified
+
+
+@app.message(re.compile("(?i)list valid targets"))
+def list_targets(message, say, context, logger):
+    say(f"Targets: {TargetTags.get_values()}")
+    return
 
 
 @app.event("message")
 def base_handle_message_events(body, logger):
     logger.debug(body)
+
+
+# TODO handle unrecognized messages
+# TODO must use mention before deployment in public channel
 
 
 # Start app
