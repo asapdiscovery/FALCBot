@@ -431,10 +431,11 @@ def run_fec(event, say, context, logger):
         planned_network=planned_network, scope=network_scope
     )
     task_ids = client.action_network(
-    planned_network=submitted_network, prioritize=False)
+        planned_network=submitted_network, prioritize=False
+    )
     logger.debug(
-            f"Submitted network {submitted_network.results.network_key} with task ids {task_ids} to campaign {campaign} and project {project}."
-        )
+        f"Submitted network {submitted_network.results.network_key} with task ids {task_ids} to campaign {campaign} and project {project}."
+    )
     # except Exception as e:
     #     say(f"Failed to submit network with error: {e}")
     #     return
@@ -481,6 +482,28 @@ def debug_series(event, say, context, logger):
         say(f"Series {series_name} not found in the database, unable to proceed")
         return
     say(f"Series {series_name} found with values: {series}")
+
+    ligand_cf_url = series[4]
+    receptor_cf_url = series[5]
+    factory_cf_url = series[2]
+    planned_network_cf_url = series[3]
+
+    # make block data from the links
+    block_data = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "Links to your debugging info :pill: :pill: :pill:",
+            },
+        },
+        _link_to_block_data(ligand_cf_url, "Ligand SDF file"),
+        _link_to_block_data(receptor_cf_url, "Receptor PDB file"),
+        _link_to_block_data(factory_cf_url, "FECFactory JSON"),
+        _link_to_block_data(planned_network_cf_url, "PlannedNetwork JSON"),
+    ]
+
+    say("Links to your debugging info:", blocks=block_data)
 
     return
 
