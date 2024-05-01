@@ -18,8 +18,8 @@ from asapdiscovery.alchemy.schema.prep_workflow import AlchemyPrepWorkflow
 from asapdiscovery.alchemy.utils import AlchemiscaleHelper
 
 from asapdiscovery.data.schema.complex import Complex, PreppedComplex
-from asapdiscovery.data.schema.ligand import write_ligands_to_multi_sdf
-
+from asapdiscovery.data.schema.ligand import Ligand
+from asapdiscovery.data.backend.openeye import oechem
 from asapdiscovery.data.services.postera.postera_factory import PosteraFactory
 from asapdiscovery.data.services.services_config import CloudfrontSettings, S3Settings
 from asapdiscovery.data.services.aws.cloudfront import CloudFront
@@ -283,7 +283,13 @@ def run_fec(event, say, context, logger):
     say(
         f"Input series has {len(input_ligands)} ligands, this may take a while to process. I'll let you know once its running. Please be patient :ghost: :ghost: :ghost:"
     )
-
+    fixed_ligands = []
+    # add hydrogens to ligands
+    for ligand in input_ligands:
+        mol = ligand.to_oemol()
+        oechem.OEAddExplicitHydrogens(mol)
+        fixed_ligands.append(Ligand.from_oemol(mol))
+    input_ligands = fixed_ligands
     # create dataset name
     dataset_name = postera_molset_name.replace("-", "_") + "_" + "FALCBot"
     project = dataset_name
@@ -421,19 +427,17 @@ def run_fec(event, say, context, logger):
     client = AlchemiscaleHelper()
 
     network_scope = Scope(org="asap", campaign=campaign, project=project)
-    try:
-        submitted_network = client.create_network(
-            planned_network=planned_network, scope=network_scope
-        )
-        task_ids = client.action_network(
-            planned_network=submitted_network, prioritize=False
-        )
-        logger.debug(
+    submitted_network = client.create_network(
+        planned_network=planned_network, scope=network_scope
+    )
+    task_ids = client.action_network(
+    planned_network=submitted_network, prioritize=False)
+    logger.debug(
             f"Submitted network {submitted_network.results.network_key} with task ids {task_ids} to campaign {campaign} and project {project}."
         )
-    except Exception as e:
-        say(f"Failed to submit network with error: {e}")
-        return
+    # except Exception as e:
+    #     say(f"Failed to submit network with error: {e}")
+    #     return
 
     insert_series(
         db_connection,
