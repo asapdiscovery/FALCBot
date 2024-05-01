@@ -18,6 +18,7 @@ dependencies:
   # falcbot
   - slack-bolt
   - pydantic<2.0a0
+  - biopython
 
 
   # ml
