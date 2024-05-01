@@ -18,18 +18,21 @@ from asapdiscovery.alchemy.schema.prep_workflow import AlchemyPrepWorkflow
 from asapdiscovery.alchemy.utils import AlchemiscaleHelper
 
 from asapdiscovery.data.schema.complex import Complex, PreppedComplex
-from asapdiscovery.data.schema.ligand import write_ligands_to_multi_sdf
-
+from asapdiscovery.data.schema.ligand import Ligand
+from asapdiscovery.data.backend.openeye import oechem
 from asapdiscovery.data.services.postera.postera_factory import PosteraFactory
 from asapdiscovery.data.services.services_config import CloudfrontSettings, S3Settings
 from asapdiscovery.data.services.aws.cloudfront import CloudFront
 from asapdiscovery.data.services.aws.s3 import S3
 
-from asapdiscovery.ml.inference import GATInference
+from asapdiscovery.ml.inference import GATInference, SchnetInference
 from asapdiscovery.data.services.postera.manifold_data_validation import TargetTags
+from asapdiscovery.ml.models import ASAPMLModelRegistry
 
+# from falcbot.sqlite_db import connect_sqlite_db, insert_series, create_series_table
 
 from rdkit import Chem
+import sqlite3
 
 from multiprocessing import cpu_count
 
@@ -46,8 +49,67 @@ class SlackSettings(BaseSettings):
     )
 
 
+def connect_sqlite_db(path, check_same_thread=False):
+    connection = None
+    try:
+        connection = sqlite3.connect(path, check_same_thread=check_same_thread)
+        print("Connection to SQLite DB successful")
+    except sqlite3.Error as e:
+        print(f"The error '{e}' occurred")
+
+    return connection
+
+
+def execute_query(connection, query):
+    cursor = connection.cursor()
+    try:
+        cursor.execute(query)
+        connection.commit()
+        print("Query executed successfully")
+    except sqlite3.Error as e:
+        print(f"The error '{e}' occurred")
+
+
+def create_series_table(connection):
+    create_series_table_query = """
+    CREATE TABLE IF NOT EXISTS series (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        factory_url TEXT NOT NULL,
+        planned_network_url TEXT NOT NULL,
+        ligands_url TEXT NOT NULL,
+        receptor_url TEXT NOT NULL
+
+    );
+    """
+    execute_query(connection, create_series_table_query)
+
+
+def insert_series(
+    connection, name, factory_url, planned_network_url, ligands_url, receptor_url
+):
+    insert_series_query = f"""
+    INSERT INTO series (name, factory_url, planned_network_url, ligands_url, receptor_url)
+    VALUES ('{name}', '{factory_url}', '{planned_network_url}', '{ligands_url}', '{receptor_url}');
+    """
+    execute_query(connection, insert_series_query)
+
+
+def query_series_by_name(connection, name):
+    query = f"SELECT * FROM series WHERE name='{name}'"
+    cursor = connection.cursor()
+    cursor.execute(query)
+    # unpack into a dictionary
+    series = cursor.fetchone()
+    print(series)
+    return series
+
+
 settings = SlackSettings()
 app = App(token=settings.SLACK_BOT_TOKEN)
+db_connection = connect_sqlite_db("falcbot.sqlite3", check_same_thread=False)
+create_series_table(db_connection)
+
 
 _status_keys = ["complete", "running", "waiting", "error", "invalid", "deleted"]
 
@@ -99,13 +161,33 @@ def _rdkit_smiles_roundtrip(smi: str) -> str:
     return Chem.MolToSmiles(mol)
 
 
-@app.message(re.compile("(.*)are you alive falcbot(.*)"))
-def are_you_alive(say, context):
+def are_you_alive_matcher(event, logger, context):
+    # regex for any instance of help, case insensitive with optional spaces
+    msg = event.get("text", None)
+    if not msg:
+        return False
+    pattern = r"(?i)are you alive"
+    match = re.search(pattern, msg)
+    return match
+
+
+@app.event("app_mention", matchers=[are_you_alive_matcher])
+def are_you_alive(event, say, context, logger):
     say(f"yes im alive!")
 
 
-@app.message(re.compile("(.*)query all networks(.*)"))
-def query_all_networks(say, context, logger):
+def query_all_networks_matcher(event, logger, context):
+    # regex for any instance of help, case insensitive with optional spaces
+    msg = event.get("text", None)
+    if not msg:
+        return False
+    pattern = r"(?i)query all networks"
+    match = re.search(pattern, msg)
+    return match
+
+
+@app.event("app_mention", matchers=[query_all_networks_matcher])
+def query_all_networks(event, say, context, logger):
     logger.debug("Querying all networks")
     client = AlchemiscaleHelper()
     scope_status_dict = client._client.get_scope_status(visualize=False)
@@ -119,30 +201,45 @@ def query_all_networks(say, context, logger):
 
     if not running_networks:
         say("No networks are running currently")
-    else:
-        for key in running_networks:
-            # get status
-            network_status = client._client.get_network_status(
-                network=key, visualize=False
-            )
-            running_tasks = client._client.get_network_actioned_tasks(network=key)
-            if "running" in network_status or "waiting" in network_status:
-                say(f"Network {key} has following status breakdown")
-                state_breakdown = ""
-                for state in _status_keys:
-                    state_breakdown += f"{state}: {network_status.get(state, 0)} "
-                say(state_breakdown)
-                say("________________________________")
+        return
+
+    networks_status = client._client.get_networks_status(running_networks)
+    networks_actioned_tasks = client._client.get_networks_actioned_tasks(
+        running_networks
+    )
+
+    for key, network_status, actioned_tasks in zip(
+        running_networks, networks_status, networks_actioned_tasks
+    ):
+        if (
+            "running" in network_status or "waiting" in network_status
+        ) and actioned_tasks:
+            say(f"Network {key} has following status breakdown")
+            state_breakdown = ""
+            for state in _status_keys:
+                state_breakdown += f"{state}: {network_status.get(state, 0)} "
+            say(state_breakdown)
+            say("________________________________")
     say("Done :smile:")
 
 
-@app.message("(?i)run FEC")
-def plan_prep_and_submit_postera(message, say, context, logger):
+def run_fec_matcher(event, logger, context):
+    # regex for any instance of help, case insensitive with optional spaces
+    msg = event.get("text", None)
+    if not msg:
+        return False
+    pattern = r"(?i)run FEC"
+    match = re.search(pattern, msg)
+    return match
+
+
+@app.event("app_mention", matchers=[run_fec_matcher])
+def run_fec(event, say, context, logger):
     logger.info("Planning and submitting from postera")
     say(
         "Preparing your calculation, please wait this may take a while, ... :ghost: :ghost: :ghost:"
     )
-    content = message.get("text")
+    content = event.get("text")
     # parse message for molset using regex
     pattern = r"on series\s+.*?(\b[^\s]+\b)+"
     match = re.search(pattern, content)
@@ -156,10 +253,9 @@ def plan_prep_and_submit_postera(message, say, context, logger):
         return
 
     campaign = "confidential"
-    project = postera_molset_name
 
     # check for attatched file
-    files = message.get("files")
+    files = event.get("files")
     if not files:
         logger.info("No file attatched, unable to proceed")
         say("No receptor file attatched, unable to proceed")
@@ -187,9 +283,16 @@ def plan_prep_and_submit_postera(message, say, context, logger):
     say(
         f"Input series has {len(input_ligands)} ligands, this may take a while to process. I'll let you know once its running. Please be patient :ghost: :ghost: :ghost:"
     )
-
+    fixed_ligands = []
+    # add hydrogens to ligands
+    for ligand in input_ligands:
+        mol = ligand.to_oemol()
+        oechem.OEAddExplicitHydrogens(mol)
+        fixed_ligands.append(Ligand.from_oemol(mol))
+    input_ligands = fixed_ligands
     # create dataset name
-    dataset_name = postera_molset_name + "_" + "FALCBot"
+    dataset_name = postera_molset_name.replace("-", "_") + "_" + "FALCBot"
+    project = dataset_name
 
     # run prep workflow
     logger.info("Running prep workflow")
@@ -320,30 +423,10 @@ def plan_prep_and_submit_postera(message, say, context, logger):
     logger.info(f"Ligands url: {ligand_cf_url}")
     logger.info(f"Receptor url: {receptor_cf_url}")
 
-    # TODO move the returned links to a leveldb or something
-
-    # # make block data from the links
-    # block_data = [
-    #     {
-    #         "type": "section",
-    #         "text": {
-    #             "type": "mrkdwn",
-    #             "text": "Your calculation is ready! Here are the links to the data :pill: :pill: :pill:",
-    #         },
-    #     },
-    #     _link_to_block_data(ligand_cf_url, "Ligand SDF file"),
-    #     _link_to_block_data(receptor_cf_url, "Receptor PDB file"),
-    #     _link_to_block_data(factory_cf_url, "FECFactory JSON"),
-    #     _link_to_block_data(planned_network_cf_url, "PlannedNetwork JSON"),
-    # ]
-
-    # say("Calculation is ready!", blocks=block_data)
-
     # submit the network
     client = AlchemiscaleHelper()
 
     network_scope = Scope(org="asap", campaign=campaign, project=project)
-
     submitted_network = client.create_network(
         planned_network=planned_network, scope=network_scope
     )
@@ -353,23 +436,91 @@ def plan_prep_and_submit_postera(message, say, context, logger):
     logger.debug(
         f"Submitted network {submitted_network.results.network_key} with task ids {task_ids} to campaign {campaign} and project {project}."
     )
+    # except Exception as e:
+    #     say(f"Failed to submit network with error: {e}")
+    #     return
 
-    say("Simulations are running! :rocket: :rocket: :rocket:")
+    insert_series(
+        db_connection,
+        dataset_name,
+        factory_cf_url,
+        planned_network_cf_url,
+        ligand_cf_url,
+        receptor_cf_url,
+    )
+
+    say(
+        f"Simulations are running! :rocket: :rocket: :rocket: Your project name is: {project}, to debug use `@falcbot debug series {dataset_name}`"
+    )
 
 
-@app.message(re.compile("plan and submit from ligand and receptor"))
-def plan_and_submit_from_ligand_and_receptor():
-    ...
+def debug_series_matcher(event, logger, context):
+    # regex for any instance of help, case insensitive with optional spaces
+    msg = event.get("text", None)
+    if not msg:
+        return False
+    pattern = r"(?i)debug series"
+    match = re.search(pattern, msg)
+    return match
 
 
-@app.message(re.compile("submit from planned network"))
-def submit_from_planned_network():
-    ...  # do something with settings
+@app.event("app_mention", matchers=[debug_series_matcher])
+def debug_series(event, say, context, logger):
+    message = event.get("text")
+    pattern = r"series\s+.*?(\b[^\s]+\b)+"
+    match = re.search(pattern, message)
+    if match:
+        series_name = match.group(1)
+        logger.info(f"Series name is {series_name}")
+    else:
+        say("Could not find series name in the message, unable to proceed")
+        return
+
+    # query the database
+    series = query_series_by_name(db_connection, series_name)
+    if not series:
+        say(f"Series {series_name} not found in the database, unable to proceed")
+        return
+    say(f"Series {series_name} found with values: {series}")
+
+    ligand_cf_url = series[4]
+    receptor_cf_url = series[5]
+    factory_cf_url = series[2]
+    planned_network_cf_url = series[3]
+
+    # make block data from the links
+    block_data = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "Links to your debugging info :pill: :pill: :pill:",
+            },
+        },
+        _link_to_block_data(ligand_cf_url, "Ligand SDF file"),
+        _link_to_block_data(receptor_cf_url, "Receptor PDB file"),
+        _link_to_block_data(factory_cf_url, "FECFactory JSON"),
+        _link_to_block_data(planned_network_cf_url, "PlannedNetwork JSON"),
+    ]
+
+    say("Links to your debugging info:", blocks=block_data)
+
+    return
 
 
-@app.message(re.compile("(?i)predict pIC50 for SMILES"))
-def make_pic50_pred(message, say, context, logger):
-    content = message.get("text")
+def make_pic50_pred_matcher(event, logger, context):
+    # regex for any instance of help, case insensitive with optional spaces
+    msg = event.get("text", None)
+    if not msg:
+        return False
+    pattern = r"(?i)predict pIC50 for SMILES"
+    match = re.search(pattern, msg)
+    return match
+
+
+@app.event("app_mention", matchers=[make_pic50_pred_matcher])
+def make_pic50_pred(event, say, context, logger):
+    content = event.get("text")
     # parse message for molset using regex
     pattern = r"(?i)SMILES\s+(.+?)\s+for\s+target\s+(.+)"
     match = re.search(pattern, content)
@@ -382,9 +533,9 @@ def make_pic50_pred(message, say, context, logger):
     if not _is_valid_smiles(smiles):
         say(f"Invalid SMILES {smiles}, unable to proceed")
         return
-    if not target in TargetTags.get_values():
+    if not target in ASAPMLModelRegistry.get_targets_with_models():
         say(
-            f"Invalid target {target}, not in: {TargetTags.get_values()}; unable to proceed"
+            f"Invalid target {target}, not in: {ASAPMLModelRegistry.get_targets_with_models()}; unable to proceed"
         )
         return
     # make prediction
@@ -398,19 +549,132 @@ def make_pic50_pred(message, say, context, logger):
     # TODO make pred for every target if none specified
 
 
-@app.message(re.compile("(?i)list valid targets"))
-def list_targets(message, say, context, logger):
-    say(f"Targets: {TargetTags.get_values()}")
+def make_structural_pred_matcher(event, logger, context):
+    # regex for any instance of help, case insensitive with optional spaces
+    msg = event.get("text", None)
+    if not msg:
+        return False
+    pattern = r"(?i)predict pIC50 for structure"
+    match = re.search(pattern, msg)
+    return match
+
+
+@app.event("app_mention", matchers=[make_structural_pred_matcher])
+def make_structural_pred(event, say, context, logger):
+    content = event.get("text")
+    # parse message for molset using regex
+    pattern = r"(?i)\s+for\s+target\s+(.+)"
+    match = re.search(pattern, content)
+    if match:
+        target = match.group(1)
+    else:
+        say("Could not find Target in the message, unable to proceed")
+        return
+
+    allowed_targets = list(
+        set(ASAPMLModelRegistry.get_targets_with_models()) - {"SARS-CoV-2-Mac1"}
+    )  # remove SARS-CoV-2-Mac1, currently not supported
+
+    if not target in allowed_targets:
+        say(f"Invalid target {target}, not in: {allowed_targets}; unable to proceed")
+        return
+
+    # check for attatched file
+    files = event.get("files")
+    if not files:
+        logger.info("No file attatched, unable to proceed")
+        say("No pdb file attatched, unable to proceed")
+        return
+    else:
+        if len(files) > 1:
+            logger.info("More than one file attatched, unable to proceed")
+            say("More than one file attatched, unable to proceed")
+            return
+        # get the first file
+        file = files[0]
+        title = file.get("title")
+        # check if it is a pdb file
+        file_extn = file.get("title").split(".")[-1]
+        if file_extn != "pdb":
+            say("Attatched file is not a pdb file, unable to proceed")
+            return
+
+    try:
+        with NamedTemporaryFile(suffix=".pdb") as temp:
+            logger.info(f"file: {file.get('url_private_download')}")
+            _download_slack_file(file.get("url_private_download"), temp.name)
+            ref_complex = Complex.from_pdb(
+                temp.name,
+                target_kwargs={"target_name": f"receptor"},
+                ligand_kwargs={"compound_name": f"receptor_ligand"},
+            )
+    except Exception as e:
+        say(f"Failed to load receptor from attatched file with error: {e}")
+        return
+
+    # make prediction
+    si = SchnetInference.from_latest_by_target(target)
+    pred = si.predict_from_oemol(ref_complex.to_combined_oemol())
+    say(
+        f"Predicted pIC50 for {title} is {pred:.2f} using model {si.model_name} :test_tube:"
+    )
+
+    # TODO make pred for every target if none specified
+
+
+def list_targets_matcher(event, logger, context):
+    # regex for any instance of help, case insensitive with optional spaces
+    msg = event.get("text", None)
+    if not event:
+        return False
+    pattern = r"(?i)list valid targets"
+    match = re.search(pattern, msg)
+    return match
+
+
+@app.event("app_mention", matchers=[list_targets_matcher])
+def list_all_targets(say, context, logger):
+    say(f"Targets: {ASAPMLModelRegistry.get_targets_with_models()}")
     return
+
+
+def help_matcher(event, logger, context):
+    # regex for any instance of help, case insensitive with optional spaces
+    msg = event.get("text", None)
+    if not event:
+        return True
+    pattern = r"(?i)help"
+    match = re.search(pattern, msg)
+    return match
+
+
+@app.event("app_mention", matchers=[help_matcher])
+def help_with_msg(say, context, event, logger):
+    help(say, context, event, logger)
+
+
+@app.event("app_mention")
+def help_on_mention(say, context, event, logger):
+    help(say, context, event, logger)
+
+
+def help(say, context, event, logger):
+    say(
+        "you asked for help or misspelt a command, I can help you with the following commands:"
+    )
+    say("* `@falcbot run FEC on series <series_name>`")
+    say("* `@falcbot predict pIC50 for SMILES <smiles> for target <target>`")
+    say("* `@falcbot predict pIC50 for structure for target <target>`")
+    say("* `@falcbot list valid targets`")
+    say("* `@falcbot query all networks`")
+    say("* `@falcbot debug series <series_name>`")
+    say("* `@falcbot are you alive`")
+    say("* `@falcbot help`")
 
 
 @app.event("message")
 def base_handle_message_events(body, logger):
     logger.debug(body)
-
-
-# TODO handle unrecognized messages
-# TODO must use mention before deployment in public channel
 
 
 # Start app
