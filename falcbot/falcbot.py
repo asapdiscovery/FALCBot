@@ -28,8 +28,8 @@ from asapdiscovery.data.services.aws.s3 import S3
 from asapdiscovery.ml.inference import GATInference, SchnetInference
 from asapdiscovery.data.services.postera.manifold_data_validation import TargetTags
 from asapdiscovery.ml.models import ASAPMLModelRegistry
-from .llm import _BASIC_ML_LLM
-from .util import _rdkit_smiles_roundtrip, _is_valid_smiles
+import llm
+import util
 
 # from falcbot.sqlite_db import connect_sqlite_db, insert_series, create_series_table
 
@@ -513,7 +513,7 @@ def pred_matcher(event, logger, context):
 def make_pic50_pred(event, say, context, logger):
     content = event.get("text")
     # parse with LLM
-    worked, model = _BASIC_ML_LLM.query(content)
+    worked, model = llm._BASIC_ML_LLM.query(content)
     if not worked:
         say("Failed to parse the message, try something like `predict pIC50 for SMILES <smiles> for target <target>`")
         return
@@ -523,7 +523,7 @@ def make_pic50_pred(event, say, context, logger):
     target = model.biological_target
     endpoint = model.property # llm found property better
 
-    if not _is_valid_smiles(smiles):
+    if not util._is_valid_smiles(smiles):
         say(f"Invalid SMILES {smiles}, unable to proceed")
         return
     
@@ -540,7 +540,7 @@ def make_pic50_pred(event, say, context, logger):
         return
     
     
-    smiles = _rdkit_smiles_roundtrip(smiles)
+    smiles = util._rdkit_smiles_roundtrip(smiles)
     gs = GATInference.get_latest_model_for_target_type_and_endpoint(target, "GAT", endpoint)
     pred = gs.predict_from_smiles(smiles)
     say(
@@ -663,7 +663,7 @@ def help(say, context, event, logger):
     say(
         "you asked for help or misspelt a command, I can help you with the following commands:"
     )
-    # say("* `@falcbot run FEC on series <series_name>`")
+    say("* `@falcbot run FEC on series <series_name>`")
     say("* `@falcbot predict pIC50 for SMILES <smiles> for target <target>`")
     say("* `@falcbot predict pIC50 for structure for target <target>`")
     say("* `@falcbot list valid targets`")

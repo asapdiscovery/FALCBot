@@ -4,7 +4,7 @@ from langchain_openai import ChatOpenAI
 from asapdiscovery.ml.models import ASAPMLModelRegistry
 from asapdiscovery.data.services.postera.manifold_data_validation import TargetTags
 
-from  .util import _is_valid_smiles
+import util 
 
 
 
