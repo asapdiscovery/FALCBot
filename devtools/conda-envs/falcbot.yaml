@@ -66,5 +66,9 @@ dependencies:
     - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-docking&subdirectory=asapdiscovery-docking
     - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-ml&subdirectory=asapdiscovery-ml
 
+      # llm
+    - langchain
+    - langchain_core
+    - langchain_openai
 
 

@@ -28,6 +28,8 @@ from asapdiscovery.data.services.aws.s3 import S3
 from asapdiscovery.ml.inference import GATInference, SchnetInference
 from asapdiscovery.data.services.postera.manifold_data_validation import TargetTags
 from asapdiscovery.ml.models import ASAPMLModelRegistry
+from .llm import _BASIC_ML_LLM
+from .util import _rdkit_smiles_roundtrip, _is_valid_smiles
 
 # from falcbot.sqlite_db import connect_sqlite_db, insert_series, create_series_table
 
@@ -148,17 +150,6 @@ def _link_to_block_data(link, text):
     }
 
 
-def _is_valid_smiles(smi):
-    m = Chem.MolFromSmiles(smi)
-    if m is None:
-        return False
-    else:
-        return True
-
-
-def _rdkit_smiles_roundtrip(smi: str) -> str:
-    mol = Chem.MolFromSmiles(smi)
-    return Chem.MolToSmiles(mol)
 
 
 def are_you_alive_matcher(event, logger, context):
@@ -508,42 +499,52 @@ def debug_series(event, say, context, logger):
     return
 
 
-def make_pic50_pred_matcher(event, logger, context):
+def pred_matcher(event, logger, context):
     # regex for any instance of help, case insensitive with optional spaces
     msg = event.get("text", None)
     if not msg:
         return False
-    pattern = r"(?i)predict pIC50 for SMILES"
+    pattern = r"(?i)predict"
     match = re.search(pattern, msg)
     return match
 
 
-@app.event("app_mention", matchers=[make_pic50_pred_matcher])
+@app.event("app_mention", matchers=[pred_matcher])
 def make_pic50_pred(event, say, context, logger):
     content = event.get("text")
-    # parse message for molset using regex
-    pattern = r"(?i)SMILES\s+(.+?)\s+for\s+target\s+(.+)"
-    match = re.search(pattern, content)
-    if match:
-        smiles = match.group(1)
-        target = match.group(2)
-    else:
-        say("Could not find SMILES and Target in the message, unable to proceed")
+    # parse with LLM
+    worked, model = _BASIC_ML_LLM.query(content)
+    if not worked:
+        say("Failed to parse the message, try something like `predict pIC50 for SMILES <smiles> for target <target>`")
         return
+    
+    # get the SMILES, target and property as parsed by the LLM
+    smiles = model.SMILES
+    target = model.biological_target
+    endpoint = model.property # llm found property better
+
     if not _is_valid_smiles(smiles):
         say(f"Invalid SMILES {smiles}, unable to proceed")
         return
+    
     if not target in ASAPMLModelRegistry.get_targets_with_models():
         say(
             f"Invalid target {target}, not in: {ASAPMLModelRegistry.get_targets_with_models()}; unable to proceed"
         )
         return
-    # make prediction
+    
+    if not endpoint in ASAPMLModelRegistry.get_endpoints():
+        say(
+            f"Invalid endpoint {endpoint}, not in: {ASAPMLModelRegistry.get_endpoints()}; unable to proceed"
+        )
+        return
+    
+    
     smiles = _rdkit_smiles_roundtrip(smiles)
-    gs = GATInference.from_latest_by_target(target)
+    gs = GATInference.get_latest_model_for_target_type_and_endpoint(target, "GAT", endpoint)
     pred = gs.predict_from_smiles(smiles)
     say(
-        f"Predicted pIC50 for {smiles} is {pred:.2f} using model {gs.model_name} :test_tube:"
+        f"Predicted {endpoint} for {smiles} is {pred:.2f} using model {gs.model_name} :test_tube:"
     )
 
     # TODO make pred for every target if none specified
@@ -662,7 +663,7 @@ def help(say, context, event, logger):
     say(
         "you asked for help or misspelt a command, I can help you with the following commands:"
     )
-    say("* `@falcbot run FEC on series <series_name>`")
+    # say("* `@falcbot run FEC on series <series_name>`")
     say("* `@falcbot predict pIC50 for SMILES <smiles> for target <target>`")
     say("* `@falcbot predict pIC50 for structure for target <target>`")
     say("* `@falcbot list valid targets`")
