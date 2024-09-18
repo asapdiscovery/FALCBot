@@ -21,9 +21,7 @@ dependencies:
   - biopython
 
   # llm 
-
-  - langchain <0.0.267,
-  - langchain-core <0.0.267,
+  - llama-index
 
 
   # ml
@@ -70,8 +68,5 @@ dependencies:
     - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-modeling&subdirectory=asapdiscovery-modeling
     - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-docking&subdirectory=asapdiscovery-docking
     - git+https://github.com/choderalab/asapdiscovery@main#egg=asapdiscovery-ml&subdirectory=asapdiscovery-ml
-
-      # llm
-    - langchain_openai
 
 
