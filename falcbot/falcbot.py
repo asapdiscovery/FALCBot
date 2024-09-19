@@ -2,6 +2,7 @@ import logging
 import re
 import logging
 from pydantic import BaseSettings, Field
+import numpy as np
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from asapdiscovery.ml.inference import GATInference
@@ -106,9 +107,13 @@ def make_pic50_pred(event, say, context, logger):
         say(f"No model found for {target} {endpoint}")
         return
     infr = GATInference.from_ml_model_spec(model)
-    pred = infr.predict_from_smiles(smiles)
+    pred, err = infr.predict_from_smiles(smiles, return_err=True)
+    if np.isnan(err):
+        errstr = " "
+    else:
+        errstr = f" ± {err:.2f} "
     say(
-        f"Predicted {_target_str} {endpoint} for {smiles} is {pred:.2f} using model {infr.model_name} :test_tube:" + (" (global model)" if _global_model else "")
+        f"Predicted {_target_str} {endpoint} for {smiles} is {pred:.2f}{errstr}using model {infr.model_name} :test_tube:" + (" (global model)" if _global_model else "")
     )
     # TODO make pred for every target if none specified
 
