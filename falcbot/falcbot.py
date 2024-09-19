@@ -1,42 +1,15 @@
 import logging
 import re
-import uuid
 import logging
-from datetime import datetime, timedelta
-from tempfile import NamedTemporaryFile
 from pydantic import BaseSettings, Field
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-
-from alchemiscale import Scope
-from openfe import ProteinComponent
-from asapdiscovery.alchemy.schema.fec import (
-    FreeEnergyCalculationFactory,
-    AlchemiscaleSettings,
-)
-from asapdiscovery.alchemy.schema.prep_workflow import AlchemyPrepWorkflow
-from asapdiscovery.alchemy.utils import AlchemiscaleHelper
-
-from asapdiscovery.data.schema.complex import Complex, PreppedComplex
-from asapdiscovery.data.schema.ligand import Ligand
-from asapdiscovery.data.backend.openeye import oechem
-from asapdiscovery.data.services.postera.postera_factory import PosteraFactory
-from asapdiscovery.data.services.services_config import CloudfrontSettings, S3Settings
-from asapdiscovery.data.services.aws.cloudfront import CloudFront
-from asapdiscovery.data.services.aws.s3 import S3
-
-from asapdiscovery.ml.inference import GATInference, SchnetInference
-from asapdiscovery.data.services.postera.manifold_data_validation import TargetTags
+from asapdiscovery.ml.inference import GATInference
 from asapdiscovery.ml.models import ASAPMLModelRegistry
 import llm
 import util
 
-# from falcbot.sqlite_db import connect_sqlite_db, insert_series, create_series_table
 
-from rdkit import Chem
-import sqlite3
-
-from multiprocessing import cpu_count
 
 # logger in a global context
 logging.basicConfig(level=logging.DEBUG)
