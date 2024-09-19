@@ -39,8 +39,7 @@ dependencies:
   - mtenn >=0.5.1
   - wandb
   - semver
-
-
+  - openeye-toolkits
 
   # other asapdiscovery deps
   - distributed
