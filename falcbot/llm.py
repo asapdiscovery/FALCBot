@@ -5,6 +5,7 @@ from asapdiscovery.data.services.postera.manifold_data_validation import TargetT
 import util 
 from llama_index.core.program import LLMTextCompletionProgram
 from llama_index.core import PromptTemplate
+from llama_index.llms.openai import OpenAI
 
 
 from pydantic import BaseModel, Field, validator
@@ -53,10 +54,13 @@ def _make_ml_prompt_template() -> PromptTemplate:
     """
     # join to make a string with "and" between each
     targets_w_models = ASAPMLModelRegistry.get_targets_with_models()
+    # filter out None values
+    targets_w_models = [t for t in targets_w_models if t is not None]        
     target_str = _and_join(targets_w_models)
     properties = _and_join(ASAPMLModelRegistry.get_endpoints())
-
-    return _base_ml_prompt_template.partial_format(targets=target_str, properties=properties)
+    pt = PromptTemplate(_base_ml_prompt_template)
+    formatted =  pt.partial_format(targets=target_str, properties=properties)
+    return formatted
 
 _ML_PROMPT_TEMPLATE = _make_ml_prompt_template()
 
@@ -65,7 +69,7 @@ _ML_PROMPT_TEMPLATE = _make_ml_prompt_template()
 
 class StructuredLLMQuery:
 
-    def __init__(self, pydantic_model: BaseModel, prompt_template: str,  openai_model="gpt-4o",):
+    def __init__(self, pydantic_model: BaseModel, prompt_template: PromptTemplate,  openai_model="gpt-4o",):
         """
         """
         self.openai_model = openai_model
@@ -76,18 +80,22 @@ class StructuredLLMQuery:
         if openai_api_key is None:
             raise ValueError("OPENAI_API_KEY environment variable is not set")
 
+        llm = OpenAI(model=self.openai_model)
+
         self.program = LLMTextCompletionProgram.from_defaults(
             output_cls=self.pydantic_model,
-            prompt_template_str=self.prompt_template,
+            prompt=self.prompt_template,
+            llm=llm,
             verbose=True)
 
 
     def query(self, query: str):
-        try:
-            parsed_model = self.program(query=query)
-            return True, parsed_model
-        except Exception as e:
-            print(e)
-            return False, None
+        # try:
+        parsed_model = self.program(query=query)
+        return True, parsed_model
+        
+        # except Exception as e:
+        #     print(e)
+        #     return False, None
 
 _BASIC_ML_LLM = StructuredLLMQuery(ASAPMLModelQuery, _ML_PROMPT_TEMPLATE)

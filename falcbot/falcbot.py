@@ -515,7 +515,7 @@ def make_pic50_pred(event, say, context, logger):
     # parse with LLM
     worked, model = llm._BASIC_ML_LLM.query(content)
     if not worked:
-        say("Failed to parse the message, try something like `predict pIC50 for SMILES <smiles> for target <target>`")
+        say("Failed to parse the message, try something like `predict pIC50 for SMILES for pro for target <target>`")
         return
     
     # get the SMILES, target and property as parsed by the LLM
@@ -541,10 +541,11 @@ def make_pic50_pred(event, say, context, logger):
     
     
     smiles = util._rdkit_smiles_roundtrip(smiles)
-    gs = GATInference.get_latest_model_for_target_type_and_endpoint(target, "GAT", endpoint)
-    pred = gs.predict_from_smiles(smiles)
+    model = ASAPMLModelRegistry.get_latest_model_for_target_type_and_endpoint(target, "GAT", endpoint)
+    infr = GATInference.from_ml_model_spec(model)
+    pred = infr.predict_from_smiles(smiles)
     say(
-        f"Predicted {endpoint} for {smiles} is {pred:.2f} using model {gs.model_name} :test_tube:"
+        f"Predicted {target} {endpoint} for {smiles} is {pred:.2f} using model {infr.model_name} :test_tube:"
     )
 
     # TODO make pred for every target if none specified
