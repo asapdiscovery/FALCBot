@@ -19,29 +19,12 @@ class ASAPMLModelQuery(BaseModel):
     property: str = Field(..., description="Measured property for the compound")
 
 
-    # VALIDATE IN slack function to give feedback?
+class IsMLQuery(BaseModel):
+    """
+    Model that checks if a query is a machine learning query
+    """
+    value: bool = Field(..., description="Boolean value indicating if the query is a machine learning query")
 
-    # @validator("SMILES")
-    # @classmethod
-    # def validate_smiles(cls, v):
-    #     if not _is_valid_smiles(v):
-    #         raise ValueError("Invalid SMILES string")
-    #     return v
-    
-    # @validator("biological_target")
-    # @classmethod
-    # def validate_target(cls, v):
-    #     if v not in TargetTags.get_values():
-    #         raise ValueError("Invalid target")
-    #     return v
-    
-    # @validator("property")
-    # @classmethod
-    # def validate_property(cls, v):
-    #     if v not in ASAPMLModelRegistry.get_endpoints():
-    #         raise ValueError("Invalid property")
-    #     return v
-    
 
 def _and_join(lst):
     return " and ".join(lst)
@@ -64,6 +47,10 @@ def _make_ml_prompt_template() -> PromptTemplate:
 
 _ML_PROMPT_TEMPLATE = _make_ml_prompt_template()
 
+
+
+_base_is_query_prompt_template = "You are an expert scientist, parse the following and determine if it is a request for a prediction from a machine learning model, look for words like predict, : {query}"
+_IS_ML_QUERY_PROMPT_TEMPLATE = PromptTemplate(_base_is_query_prompt_template)
 
 
 
@@ -90,12 +77,14 @@ class StructuredLLMQuery:
 
 
     def query(self, query: str):
-        # try:
-        parsed_model = self.program(query=query)
-        return True, parsed_model
+        try:
+            parsed_model = self.program(query=query)
+            return True, parsed_model
         
-        # except Exception as e:
-        #     print(e)
-        #     return False, None
+        except Exception as e:
+            print(e)
+            return False, None
 
 _BASIC_ML_LLM = StructuredLLMQuery(ASAPMLModelQuery, _ML_PROMPT_TEMPLATE)
+
+_IS_ML_QUERY_LLM = StructuredLLMQuery(IsMLQuery, _IS_ML_QUERY_PROMPT_TEMPLATE)

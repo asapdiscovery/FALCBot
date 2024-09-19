@@ -173,9 +173,11 @@ def pred_matcher(event, logger, context):
     msg = event.get("text", None)
     if not msg:
         return False
-    pattern = r"(?i)predict"
-    match = re.search(pattern, msg)
-    return match
+    worked, model = llm._IS_ML_QUERY_LLM.query(msg)
+    if not worked:
+        return False
+    if worked:
+        return model.value
 
 
 @app.event("app_mention", matchers=[pred_matcher])
@@ -191,6 +193,7 @@ def make_pic50_pred(event, say, context, logger):
     smiles = model.SMILES
     target = model.biological_target
     endpoint = model.property # llm found property better
+
 
     if not util._is_valid_smiles(smiles):
         say(f"Invalid SMILES {smiles}, unable to proceed")
@@ -208,89 +211,30 @@ def make_pic50_pred(event, say, context, logger):
         )
         return
     
+    _global_model = False
+
+    if not ASAPMLModelRegistry.endpoint_has_target(endpoint):
+        _target = None
+        _global_model = True
+    else:
+        _target = target
+
+    
     
     smiles = util._rdkit_smiles_roundtrip(smiles)
-    model = ASAPMLModelRegistry.get_latest_model_for_target_type_and_endpoint(target, "GAT", endpoint)
+    model = ASAPMLModelRegistry.get_latest_model_for_target_type_and_endpoint(_target, "GAT", endpoint)
+    if model is None:
+        say(f"No model found for {target} {endpoint}")
+        return
     infr = GATInference.from_ml_model_spec(model)
     pred = infr.predict_from_smiles(smiles)
     say(
-        f"Predicted {target} {endpoint} for {smiles} is {pred:.2f} using model {infr.model_name} :test_tube:"
+        f"Predicted {target} {endpoint} for {smiles} is {pred:.2f} using model {infr.model_name} :test_tube:" + (" (global model)" if _global_model else "")
     )
-
     # TODO make pred for every target if none specified
 
+    return 
 
-def make_structural_pred_matcher(event, logger, context):
-    # regex for any instance of help, case insensitive with optional spaces
-    msg = event.get("text", None)
-    if not msg:
-        return False
-    pattern = r"(?i)predict pIC50 for structure"
-    match = re.search(pattern, msg)
-    return match
-
-
-@app.event("app_mention", matchers=[make_structural_pred_matcher])
-def make_structural_pred(event, say, context, logger):
-    content = event.get("text")
-    # parse message for molset using regex
-    pattern = r"(?i)\s+for\s+target\s+(.+)"
-    match = re.search(pattern, content)
-    if match:
-        target = match.group(1)
-    else:
-        say("Could not find Target in the message, unable to proceed")
-        return
-
-    allowed_targets = list(
-        set(ASAPMLModelRegistry.get_targets_with_models()) - {"SARS-CoV-2-Mac1"}
-    )  # remove SARS-CoV-2-Mac1, currently not supported
-
-    if not target in allowed_targets:
-        say(f"Invalid target {target}, not in: {allowed_targets}; unable to proceed")
-        return
-
-    # check for attatched file
-    files = event.get("files")
-    if not files:
-        logger.info("No file attatched, unable to proceed")
-        say("No pdb file attatched, unable to proceed")
-        return
-    else:
-        if len(files) > 1:
-            logger.info("More than one file attatched, unable to proceed")
-            say("More than one file attatched, unable to proceed")
-            return
-        # get the first file
-        file = files[0]
-        title = file.get("title")
-        # check if it is a pdb file
-        file_extn = file.get("title").split(".")[-1]
-        if file_extn != "pdb":
-            say("Attatched file is not a pdb file, unable to proceed")
-            return
-
-    try:
-        with NamedTemporaryFile(suffix=".pdb") as temp:
-            logger.info(f"file: {file.get('url_private_download')}")
-            _download_slack_file(file.get("url_private_download"), temp.name)
-            ref_complex = Complex.from_pdb(
-                temp.name,
-                target_kwargs={"target_name": f"receptor"},
-                ligand_kwargs={"compound_name": f"receptor_ligand"},
-            )
-    except Exception as e:
-        say(f"Failed to load receptor from attatched file with error: {e}")
-        return
-
-    # make prediction
-    si = SchnetInference.from_latest_by_target(target)
-    pred = si.predict_from_oemol(ref_complex.to_combined_oemol())
-    say(
-        f"Predicted pIC50 for {title} is {pred:.2f} using model {si.model_name} :test_tube:"
-    )
-
-    # TODO make pred for every target if none specified
 
 
 def list_targets_matcher(event, logger, context):
@@ -305,7 +249,10 @@ def list_targets_matcher(event, logger, context):
 
 @app.event("app_mention", matchers=[list_targets_matcher])
 def list_all_targets(say, context, logger):
-    say(f"Targets: {ASAPMLModelRegistry.get_targets_with_models()}")
+    targets = ASAPMLModelRegistry.get_targets_with_models()
+    # filter out None values
+    targets = [t for t in targets if t is not None]
+    say(f"Targets: {targets}")
     return
 
 
@@ -319,7 +266,7 @@ def list_endpoints_matcher(event, logger, context):
     return match
 
 
-@app.event("app_mention", matchers=[list_targets_matcher])
+@app.event("app_mention", matchers=[list_endpoints_matcher])
 def list_endpoints(say, context, logger):
     say(f"Endpoints: {ASAPMLModelRegistry.get_endpoints()}")
     return
@@ -351,7 +298,6 @@ def help(say, context, event, logger):
         "you asked for help or misspelt a command, I can help you with the following commands:\n"
     )
     say("* `@falcbot predict <endpoint> for compound <smiles> for <target>`")
-    say("* `@falcbot predict pIC50 for structure for target <target>`")
     say("* `@falcbot list valid targets`")
     say("* `@falcbot list valid endpoints`")
     say("* `@falcbot are you alive`")
