@@ -120,8 +120,10 @@ def make_pic50_pred(event, say, context, logger):
     if not ASAPMLModelRegistry.endpoint_has_target(endpoint):
         _target = None
         _global_model = True
+        _target_str = "global"
     else:
         _target = target
+        _target_str = target
 
     
     
@@ -133,7 +135,7 @@ def make_pic50_pred(event, say, context, logger):
     infr = GATInference.from_ml_model_spec(model)
     pred = infr.predict_from_smiles(smiles)
     say(
-        f"Predicted {target} {endpoint} for {smiles} is {pred:.2f} using model {infr.model_name} :test_tube:" + (" (global model)" if _global_model else "")
+        f"Predicted {_target_str} {endpoint} for {smiles} is {pred:.2f} using model {infr.model_name} :test_tube:" + (" (global model)" if _global_model else "")
     )
     # TODO make pred for every target if none specified
 
