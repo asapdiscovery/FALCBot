@@ -41,17 +41,6 @@ dependencies:
   - semver
 
 
-  # alchemy
-  - numpy
-  - gufe =>0.9.5
-  - httpx
-  - perses >=0.10.2
-  - kartograf
-  - rich
-  - alchemiscale-client
-  - cinnabar >=0.4.1
-  - openeye-toolkits
-  - openfe
 
   # other asapdiscovery deps
   - distributed
