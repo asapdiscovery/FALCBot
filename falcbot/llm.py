@@ -27,7 +27,7 @@ class IsMLQuery(BaseModel):
 def _and_join(lst):
     return " and ".join(lst)
 
-_base_ml_prompt_template = "You are an expert scientist, parse the following making sure all SMILES strings are represented exactly as in the input: Be very careful and use only SMILES already in the prompt. Allowed variables for target are {targets} and for property are {properties}. If properties do not appear close to the allowed values, use None. For targets you can be more generous: {query}"
+_base_ml_prompt_template = "You are an expert scientist, parse the following making sure all SMILES strings are represented exactly as in the input: Be very careful and use only SMILES already in the prompt. Allowed variables for target are {targets} and for property are {properties}. If properties or targets do not appear close to the allowed values, use None :\n {query}"
 
 def _make_ml_prompt_template() -> PromptTemplate:
     """
