@@ -80,9 +80,12 @@ def make_pic50_pred(event, say, context, logger):
         say(f"Invalid SMILES {smiles}, unable to proceed")
         return
     
+    targets = ASAPMLModelRegistry.get_targets_with_models()
+    # filter out None values
+    targets = [t for t in targets if t is not None]
     if not target in ASAPMLModelRegistry.get_targets_with_models():
         say(
-            f"Invalid target {target}, not in: {ASAPMLModelRegistry.get_targets_with_models()}; unable to proceed"
+            f"Invalid target {target}, not in: {targets}; unable to proceed"
         )
         return
     
