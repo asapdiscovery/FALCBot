@@ -17,7 +17,7 @@ import time
 logging.basicConfig(level=logging.DEBUG)
 
 # update the registry every 4 hours
-schedule.every(4).hour.do(ASAPMLModelRegistry.update_registry())
+schedule.every(4).hours.do(ASAPMLModelRegistry.update_registry)
 
 
 class SlackSettings(BaseSettings):
