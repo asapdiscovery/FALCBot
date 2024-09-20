@@ -19,6 +19,7 @@ dependencies:
   - slack-bolt
   - pydantic<2.0a0
   - biopython
+  - schedule
 
   # llm 
   - llama-index
