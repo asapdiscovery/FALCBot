@@ -60,6 +60,9 @@ def pred_matcher(event, logger, context):
 
 @app.event("app_mention", matchers=[pred_matcher])
 def make_pic50_pred(event, say, context, logger):
+    # refresh the registry every time a prediction is made
+    ASAPMLModelRegistry.update_registry()
+
     content = event.get("text")
     # parse with LLM
     worked, model = llm._BASIC_ML_LLM.query(content)
