@@ -27,7 +27,7 @@ class IsMLQuery(BaseModel):
 def _and_join(lst):
     return " and ".join(lst)
 
-_base_ml_prompt_template = "You are an expert scientist, parse the following making sure all SMILES strings are represented exactly as in the input: Be very careful and use only SMILES already in the prompt. Allowed variables for target are {targets} and for property are {properties} : {query}"
+_base_ml_prompt_template = "You are an expert scientist, parse the following making sure all SMILES strings are represented exactly as in the input: Be very careful and use only SMILES already in the prompt. Allowed variables for target are {targets} and for property are {properties}. If properties do not appear close to the allowed values, use None. For targets you can be more generous: {query}"
 
 def _make_ml_prompt_template() -> PromptTemplate:
     """
@@ -35,10 +35,10 @@ def _make_ml_prompt_template() -> PromptTemplate:
     """
     # join to make a string with "and" between each
     targets_w_models = ASAPMLModelRegistry.get_targets_with_models()
-    # filter out None values
-    targets_w_models = [t for t in targets_w_models if t is not None]        
+    targets_w_models = [t for t in targets_w_models if t is not None] + ["None"]
+    properties = ASAPMLModelRegistry.get_endpoints() + ["None"]       
     target_str = _and_join(targets_w_models)
-    properties = _and_join(ASAPMLModelRegistry.get_endpoints())
+    properties = _and_join(properties)
     pt = PromptTemplate(_base_ml_prompt_template)
     formatted =  pt.partial_format(targets=target_str, properties=properties)
     return formatted
