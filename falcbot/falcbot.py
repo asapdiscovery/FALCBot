@@ -9,11 +9,15 @@ from asapdiscovery.ml.inference import GATInference
 from asapdiscovery.ml.models import ASAPMLModelRegistry
 import llm
 import util
-
+import schedule
+import time
 
 
 # logger in a global context
 logging.basicConfig(level=logging.DEBUG)
+
+# update the registry every 4 hours
+schedule.every(4).hour.do(ASAPMLModelRegistry.update_registry())
 
 
 class SlackSettings(BaseSettings):
@@ -60,8 +64,6 @@ def pred_matcher(event, logger, context):
 
 @app.event("app_mention", matchers=[pred_matcher])
 def make_pic50_pred(event, say, context, logger):
-    # refresh the registry every time a prediction is made
-    ASAPMLModelRegistry.update_registry()
 
     content = event.get("text")
     # parse with LLM
