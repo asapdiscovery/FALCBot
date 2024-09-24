@@ -5,8 +5,6 @@ services:
     command: python falcbot/falcbot.py
     image: ${FALCBOT_DOCKER_IMAGE:?err}
     container_name: "slackbot"
-    ports:
-      - 80:80
     volumes:
       - type: bind
         source: $HOME/.OpenEye/
