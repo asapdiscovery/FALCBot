@@ -11,3 +11,4 @@ services:
         target: /home/mambauser/.OpenEye/
     env_file:
       - .env
+    restart: always
